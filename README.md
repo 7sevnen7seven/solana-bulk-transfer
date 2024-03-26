@@ -4,14 +4,14 @@
 
 This document provides a summary of two optimization updates made to the Solana batch transfer script.
 
-### First Update
+###  Update
 
 - **Error Handling**: Added more detailed error handling to provide more information when transactions fail.
 - **Logging**: Implemented logging functionality to track the transaction process and outcomes.
 - **Configuration File**: Introduced a configuration file to manage private keys and transfer targets, enhancing security and flexibility.
 - **Transaction Confirmation**: Added checks for transaction confirmation status to ensure successful submission to the blockchain.
 
-### Second Update
+###  Update
 
 - **Configuration Validation**: Ensured all necessary information in the configuration file is complete and valid.
 - **Enhanced Security**: Avoided direct use of private keys in the code, instead introducing them through environment variables or external secure storage.
