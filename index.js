@@ -1,4 +1,4 @@
-// Import the Solana Web3.js library and the file system library
+// Import necessary libraries
 const solanaWeb3 = require('@solana/web3.js');
 const fs = require('fs');
 const dotenv = require('dotenv');
@@ -6,62 +6,68 @@ const dotenv = require('dotenv');
 // Load environment variables
 dotenv.config();
 
-// Read the private key from environment variables
-const PRIVATE_KEY = process.env.PRIVATE_KEY.split(',').map(num => parseInt(num, 10));
-const sender = solanaWeb3.Keypair.fromSecretKey(new Uint8Array(PRIVATE_KEY));
+// Initialize sender keypair from environment variable
+const sender = solanaWeb3.Keypair.fromSecretKey(
+  new Uint8Array(process.env.PRIVATE_KEY.split(',').map(num => parseInt(num, 10)))
+);
 
-// Read transfer targets from the configuration file
+// Load transfer targets from configuration file
 const configPath = process.argv[2] || 'config.json';
-const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
-const transfers = config.transfers;
+const { transfers } = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
 
-// Create a new connection to the Solana mainnet
+// Establish connection to the Solana mainnet
 const connection = new solanaWeb3.Connection(solanaWeb3.clusterApiUrl('mainnet-beta'), 'confirmed');
 
-// Check account balance
-async function checkBalance() {
+// Function to check if the account has sufficient balance for transfers and fees
+async function hasSufficientBalance() {
   const balance = await connection.getBalance(sender.publicKey);
-  const totalTransferAmount = transfers.reduce((acc, transfer) => acc + transfer.amount, 0);
-  const transactionFee = await connection.getFeeForMessage(new solanaWeb3.Message({instructions: []}), 'confirmed');
-  return balance >= totalTransferAmount + transactionFee;
+  const totalTransferAmount = transfers.reduce((acc, { amount }) => acc + amount, 0);
+  const transactionFee = await getTransactionFee();
+  return balance >= totalTransferAmount + transactionFee * transfers.length;
 }
 
-// Create and sign transactions
-async function signAndSendTransactions() {
-  if (!await checkBalance()) {
-    console.error('Insufficient funds in the account to cover transaction fees and transfer amounts.');
+// Function to get the current transaction fee
+async function getTransactionFee() {
+  const { feeCalculator } = await connection.getRecentBlockhash();
+  return feeCalculator.lamportsPerSignature;
+}
+
+// Function to create a transfer transaction
+function createTransferTransaction(to, amount) {
+  const recipientPublicKey = new solanaWeb3.PublicKey(to);
+  return new solanaWeb3.Transaction().add(
+    solanaWeb3.SystemProgram.transfer({
+      fromPubkey: sender.publicKey,
+      toPubkey: recipientPublicKey,
+      lamports: amount
+    })
+  );
+}
+
+// Function to process batch transfers
+async function processBatchTransfers() {
+  if (!await hasSufficientBalance()) {
+    console.error('Insufficient funds for transfers and fees.');
     return;
   }
 
-  const results = {
-    success: [],
-    failure: []
-  };
+  const results = { success: [], failure: [] };
 
-  for (const transfer of transfers) {
-    const transaction = new solanaWeb3.Transaction().add(
-      solanaWeb3.SystemProgram.transfer({
-        fromPubkey: sender.publicKey,
-        toPubkey: new solanaWeb3.PublicKey(transfer.to),
-        lamports: transfer.amount
-      })
-    );
+  for (const { to, amount } of transfers) {
+    const transaction = createTransferTransaction(to, amount);
 
     try {
-      // Sign and send the transaction
-      const signature = await solanaWeb3.sendAndConfirmTransaction(connection, transaction, [sender], { skipPreflight: false });
-      console.log(`Transaction successful, signature: ${signature}`);
+      const signature = await solanaWeb3.sendAndConfirmTransaction(connection, transaction, [sender]);
+      console.log(`Transfer successful: ${signature}`);
       results.success.push(signature);
     } catch (error) {
-      console.error(`Batch transfer failed, target address: ${transfer.to}`, error);
-      results.failure.push(error);
-      // Retry logic can be added here
+      console.error(`Transfer to ${to} failed:`, error);
+      results.failure.push({ to, error });
     }
   }
 
-  // Output summary results
-  console.log('Batch transfer complete. Success:', results.success.length, 'Failures:', results.failure.length);
+  console.log(`Batch transfer summary: ${results.success.length} successful, ${results.failure.length} failed.`);
 }
 
-// Execute batch transfers
-signAndSendTransactions();
+// Execute the batch transfers
+processBatchTransfers();
